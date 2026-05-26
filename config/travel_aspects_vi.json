@@ -1,0 +1,11 @@
+{
+  "room": ["phòng", "giường", "view", "ban công", "phòng tắm"],
+  "cleanliness": ["vệ sinh", "sạch", "bẩn", "mùi", "bụi"],
+  "staff": ["nhân viên", "lễ tân", "hướng dẫn viên"],
+  "service": ["dịch vụ", "phục vụ", "hỗ trợ", "check-in"],
+  "location": ["vị trí", "trung tâm", "gần biển", "sân bay"],
+  "food": ["đồ ăn", "bữa sáng", "nhà hàng", "buffet", "cafe"],
+  "price": ["giá", "chi phí", "đắt", "rẻ", "đáng tiền"],
+  "wifi": ["wifi", "mạng", "internet"],
+  "pool": ["hồ bơi", "bể bơi"]
+}
