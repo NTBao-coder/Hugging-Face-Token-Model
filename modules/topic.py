@@ -4,7 +4,9 @@ import numpy as np
 import pandas as pd
 from typing import Any, Tuple, List
 from modules import get_inference_client, get_hf_token
-from modules.intent_ner import classify_intent
+from modules.translation import TranslationService, TranslationError
+from utils.language_detect import LanguageDetector
+from utils.preprocessing import normalize_vietnamese_text
 
 # Predefined candidate topic names for zero-shot auto-labeling
 CANDIDATE_TOPICS = [
@@ -17,6 +19,18 @@ CANDIDATE_TOPICS = [
     "Văn hóa & Tham quan"
 ]
 
+CANDIDATE_TOPICS_EN_TO_VI = {
+    "Beach and resort": "Biển và nghỉ dưỡng",
+    "Local food": "Ẩm thực địa phương",
+    "Transportation and location": "Di chuyển & Vị trí",
+    "Hotel service and reception": "Dịch vụ khách sạn & Lễ tân",
+    "Room quality and amenities": "Chất lượng phòng & Tiện nghi",
+    "Costs and prices": "Chi phí & Giá cả",
+    "Culture and sightseeing": "Văn hóa & Tham quan",
+}
+
+CANDIDATE_TOPICS_EN = list(CANDIDATE_TOPICS_EN_TO_VI.keys())
+
 TOPIC_KEYWORDS = {
     "Biển và nghỉ dưỡng": ["biển", "resort", "hồ bơi", "view", "nắng", "đảo", "beach", "pool", "sun"],
     "Ẩm thực địa phương": ["đồ ăn", "món", "nhà hàng", "chợ", "hải sản", "bữa sáng", "food", "breakfast", "restaurant"],
@@ -26,6 +40,44 @@ TOPIC_KEYWORDS = {
     "Chi phí & Giá cả": ["giá", "vé", "chi phí", "ngân sách", "rẻ", "đắt", "price", "cost", "value"],
     "Văn hóa & Tham quan": ["bảo tàng", "phố cổ", "chùa", "di tích", "tham quan", "visit", "tourist", "sightseeing"]
 }
+
+
+def _prepare_topic_docs(docs: List[str]) -> dict[str, Any]:
+    """Normalize and translate Vietnamese review batches before topic modeling."""
+    normalized_docs = [normalize_vietnamese_text(doc) for doc in docs if doc and doc.strip()]
+    translator = TranslationService()
+    detector = LanguageDetector(translator)
+    detections = [detector.detect(doc) for doc in normalized_docs]
+    has_vietnamese = any(item.language == "vi" for item in detections)
+
+    if not has_vietnamese:
+        return {
+            "docs_for_model": normalized_docs,
+            "translated_docs": [],
+            "detected_languages": [item.language for item in detections],
+            "translation_source": "bypass",
+        }
+
+    translated_docs = []
+    for doc, detection in zip(normalized_docs, detections):
+        if detection.language != "vi":
+            translated_docs.append(doc)
+            continue
+        try:
+            translated_docs.append(translator.translate(doc, src="vi", dest="en"))
+        except TranslationError:
+            translated_docs.append(doc)
+
+    return {
+        "docs_for_model": translated_docs,
+        "translated_docs": translated_docs,
+        "detected_languages": [item.language for item in detections],
+        "translation_source": translator.backend,
+    }
+
+
+def _topic_label_to_vi(label: str) -> str:
+    return CANDIDATE_TOPICS_EN_TO_VI.get(label, label)
 
 class FallbackTopicModel:
     """A Scikit-Learn KMeans + TF-IDF fallback that mimics BERTopic's API."""
@@ -93,12 +145,12 @@ class FallbackTopicModel:
             try:
                 res = client.zero_shot_classification(
                     rep_text,
-                    CANDIDATE_TOPICS,
+                    CANDIDATE_TOPICS_EN,
                     model="facebook/bart-large-mnli"
                 )
                 if isinstance(res, dict):
-                    return res["labels"][0]
-                return res[0].label
+                    return _topic_label_to_vi(res["labels"][0])
+                return _topic_label_to_vi(res[0].label)
             except Exception:
                 pass
                 
@@ -123,8 +175,9 @@ class FallbackTopicModel:
 
 def detect_topics_zeroshot(text: str, topics: List[str] | None = None) -> dict[str, Any]:
     """Identify the primary topic of a single review using Zero-Shot classification."""
-    if not topics:
-        topics = CANDIDATE_TOPICS
+    prepared = _prepare_topic_docs([text])
+    text_for_model = prepared["docs_for_model"][0] if prepared["docs_for_model"] else text
+    candidate_labels = topics or CANDIDATE_TOPICS_EN
         
     client = get_inference_client()
     if client is None:
@@ -135,18 +188,28 @@ def detect_topics_zeroshot(text: str, topics: List[str] | None = None) -> dict[s
             scores[topic] = sum(1 for kw in keywords if kw in lowered)
         best_topic = max(scores, key=scores.get)
         if scores[best_topic] == 0:
-            return {"topic": "Chủ đề chung", "score": 0.5, "source": "heuristic"}
-        return {"topic": best_topic, "score": 0.7, "source": "heuristic"}
+            return {"topic": "Chủ đề chung", "score": 0.5, "source": "heuristic", **prepared}
+        return {"topic": best_topic, "score": 0.7, "source": "heuristic", **prepared}
         
     try:
         res = client.zero_shot_classification(
-            text,
-            topics,
+            text_for_model,
+            candidate_labels,
             model="facebook/bart-large-mnli"
         )
         if isinstance(res, dict):
-            return {"topic": res["labels"][0], "score": round(res["scores"][0], 3), "source": "huggingface"}
-        return {"topic": res[0].label, "score": round(res[0].score, 3), "source": "huggingface"}
+            label = res["labels"][0]
+            score = res["scores"][0]
+        else:
+            label = res[0].label
+            score = res[0].score
+        return {
+            "topic": _topic_label_to_vi(label),
+            "topic_en": label,
+            "score": round(score, 3),
+            "source": "huggingface",
+            **prepared,
+        }
     except Exception:
         # Fallback to keyword matcher
         lowered = text.lower()
@@ -154,7 +217,7 @@ def detect_topics_zeroshot(text: str, topics: List[str] | None = None) -> dict[s
         for topic, keywords in TOPIC_KEYWORDS.items():
             scores[topic] = sum(1 for kw in keywords if kw in lowered)
         best_topic = max(scores, key=scores.get)
-        return {"topic": best_topic, "score": 0.6, "source": "heuristic_fallback"}
+        return {"topic": best_topic, "score": 0.6, "source": "heuristic_fallback", **prepared}
 
 
 def detect_topics_bertopic(docs: List[str]) -> Tuple[List[int], Any]:
@@ -163,6 +226,9 @@ def detect_topics_bertopic(docs: List[str]) -> Tuple[List[int], Any]:
     
     If BERTopic is not installed or import fails, falls back gracefully to FallbackTopicModel.
     """
+    prepared = _prepare_topic_docs(docs)
+    docs_for_model = prepared["docs_for_model"]
+
     try:
         from bertopic import BERTopic
         from sentence_transformers import SentenceTransformer
@@ -173,7 +239,10 @@ def detect_topics_bertopic(docs: List[str]) -> Tuple[List[int], Any]:
             min_topic_size=min(2, len(docs)),
             nr_topics="auto"
         )
-        topics, _ = topic_model.fit_transform(docs)
+        topics, _ = topic_model.fit_transform(docs_for_model)
+        topic_model.source_docs = docs
+        topic_model.translated_docs = prepared["translated_docs"]
+        topic_model.detected_languages = prepared["detected_languages"]
         
         # Zero-shot label naming for topic representations
         topic_info = topic_model.get_topic_info()
@@ -191,11 +260,11 @@ def detect_topics_bertopic(docs: List[str]) -> Tuple[List[int], Any]:
                 try:
                     res = client.zero_shot_classification(
                         rep_text,
-                        CANDIDATE_TOPICS,
+                        CANDIDATE_TOPICS_EN,
                         model="facebook/bart-large-mnli"
                     )
                     label = res["labels"][0] if isinstance(res, dict) else res[0].label
-                    updated_names[topic_id] = f"{topic_id}_{label}"
+                    updated_names[topic_id] = f"{topic_id}_{_topic_label_to_vi(label)}"
                 except Exception:
                     updated_names[topic_id] = f"{topic_id}_Topic {topic_id}"
             
@@ -206,6 +275,9 @@ def detect_topics_bertopic(docs: List[str]) -> Tuple[List[int], Any]:
         
     except ImportError:
         # Fallback to KMeans
-        model = FallbackTopicModel(n_clusters=max(2, len(docs) // 3))
-        topics, fitted_model = model.fit_transform(docs)
+        model = FallbackTopicModel(n_clusters=max(2, len(docs_for_model) // 3))
+        topics, fitted_model = model.fit_transform(docs_for_model)
+        fitted_model.source_docs = docs
+        fitted_model.translated_docs = prepared["translated_docs"]
+        fitted_model.detected_languages = prepared["detected_languages"]
         return topics, fitted_model

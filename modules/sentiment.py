@@ -3,6 +3,10 @@
 import re
 from typing import Any
 from modules import get_inference_client
+from modules.translation import TranslationService, TranslationError
+from utils.language_detect import LanguageDetector
+from utils.label_mapper import map_aspect, map_sentiment
+from utils.preprocessing import normalize_vietnamese_text
 
 # Define constants for rule-based fallback
 ASPECT_KEYWORDS = {
@@ -25,6 +29,28 @@ NEGATIVE_WORDS = [
 ]
 
 TRAVEL_ASPECTS_EN = ["room", "cleanliness", "staff", "service", "location", "food", "price", "wifi", "pool"]
+
+
+def _prepare_english_input(text: str) -> dict[str, Any]:
+    """Detect VI/EN and translate Vietnamese text to English for EN-only models."""
+    normalized = normalize_vietnamese_text(text)
+    translator = TranslationService()
+    detection = LanguageDetector(translator).detect(normalized)
+    translated = normalized
+
+    if detection.language == "vi":
+        try:
+            translated = translator.translate(normalized, src="vi", dest="en")
+        except TranslationError:
+            translated = normalized
+
+    return {
+        "original_text": normalized,
+        "text_for_model": translated,
+        "translated_text": translated if translated != normalized else "",
+        "detected_language": detection.language,
+        "language_confidence": detection.confidence,
+    }
 
 def rule_based_absa(text: str) -> list[dict[str, Any]]:
     """Perform rule-based aspect-based sentiment analysis as a fallback."""
@@ -60,6 +86,7 @@ def rule_based_absa(text: str) -> list[dict[str, Any]]:
         results.append({
             "aspect": aspect,
             "sentiment": sentiment,
+            "sentiment_vi": map_sentiment(sentiment),
             "confidence": round(confidence, 3),
             "source": "heuristic"
         })
@@ -72,6 +99,9 @@ def analyze_sentiment(text: str, mode: str = "basic") -> dict[str, Any] | list[d
     mode="basic" -> returns dict {"label": "POSITIVE"|"NEGATIVE"|"NEUTRAL", "score": float}
     mode="absa"  -> returns list of dicts [{"aspect": str, "sentiment": str, "confidence": float, "source": str}]
     """
+    prepared = _prepare_english_input(text)
+    text_for_model = prepared["text_for_model"]
+    is_vi = prepared["detected_language"] == "vi"
     client = get_inference_client()
     
     if mode == "basic":
@@ -83,22 +113,28 @@ def analyze_sentiment(text: str, mode: str = "basic") -> dict[str, Any] | list[d
             score_diff = len(pos_hits) - len(neg_hits)
             
             if score_diff > 0:
-                return {"label": "POSITIVE", "score": 0.8, "source": "heuristic"}
+                return {"label": "POSITIVE", "label_vi": map_sentiment("POSITIVE"), "score": 0.8, "source": "heuristic", **prepared}
             elif score_diff < 0:
-                return {"label": "NEGATIVE", "score": 0.8, "source": "heuristic"}
-            return {"label": "NEUTRAL", "score": 0.5, "source": "heuristic"}
+                return {"label": "NEGATIVE", "label_vi": map_sentiment("NEGATIVE"), "score": 0.8, "source": "heuristic", **prepared}
+            return {"label": "NEUTRAL", "label_vi": map_sentiment("NEUTRAL"), "score": 0.5, "source": "heuristic", **prepared}
             
         try:
             # Use twitter-roberta-base-sentiment-latest
             result = client.text_classification(
-                text,
+                text_for_model,
                 model="cardiffnlp/twitter-roberta-base-sentiment-latest"
             )
             # Find label with highest score
             best = max(result, key=lambda x: x.score)
             label_map = {"positive": "POSITIVE", "negative": "NEGATIVE", "neutral": "NEUTRAL"}
             mapped_label = label_map.get(best.label.lower(), best.label.upper())
-            return {"label": mapped_label, "score": round(best.score, 3), "source": "huggingface"}
+            return {
+                "label": mapped_label,
+                "label_vi": map_sentiment(mapped_label),
+                "score": round(best.score, 3),
+                "source": "huggingface",
+                **prepared,
+            }
         except Exception:
             # If API fails, use rule-based fallback
             lowered = text.lower()
@@ -107,10 +143,10 @@ def analyze_sentiment(text: str, mode: str = "basic") -> dict[str, Any] | list[d
             score_diff = len(pos_hits) - len(neg_hits)
             
             if score_diff > 0:
-                return {"label": "POSITIVE", "score": 0.75, "source": "heuristic_fallback"}
+                return {"label": "POSITIVE", "label_vi": map_sentiment("POSITIVE"), "score": 0.75, "source": "heuristic_fallback", **prepared}
             elif score_diff < 0:
-                return {"label": "NEGATIVE", "score": 0.75, "source": "heuristic_fallback"}
-            return {"label": "NEUTRAL", "score": 0.5, "source": "heuristic_fallback"}
+                return {"label": "NEGATIVE", "label_vi": map_sentiment("NEGATIVE"), "score": 0.75, "source": "heuristic_fallback", **prepared}
+            return {"label": "NEUTRAL", "label_vi": map_sentiment("NEUTRAL"), "score": 0.5, "source": "heuristic_fallback", **prepared}
             
     elif mode == "absa":
         if client is None:
@@ -121,7 +157,7 @@ def analyze_sentiment(text: str, mode: str = "basic") -> dict[str, Any] | list[d
             # We check both English aspect list and Vietnamese aspect list
             # We can prompt the model: f"{review} [SEP] {aspect}"
             for aspect in TRAVEL_ASPECTS_EN:
-                prompt = f"{text} [SEP] {aspect}"
+                prompt = f"{text_for_model} [SEP] {aspect}"
                 output = client.text_classification(
                     prompt,
                     model="yangheng/deberta-v3-base-absa-v1.1"
@@ -130,41 +166,16 @@ def analyze_sentiment(text: str, mode: str = "basic") -> dict[str, Any] | list[d
                     best = max(output, key=lambda x: x.score)
                     if best.score > 0.55:
                         results.append({
-                            "aspect": aspect,
+                            "aspect": map_aspect(aspect) if is_vi else aspect,
+                            "aspect_en": aspect,
+                            "aspect_vi": map_aspect(aspect),
                             "sentiment": best.label.upper(),
+                            "sentiment_vi": map_sentiment(best.label.upper()),
                             "confidence": round(best.score, 3),
-                            "source": "huggingface"
+                            "source": "huggingface",
+                            **prepared,
                         })
             
-            # Map EN aspects to VI if the input is mostly Vietnamese
-            is_vi = any(w in text.lower() for w in ["khách sạnh", "phòng", "vị trí", "ăn", "uống", "giá"])
-            if is_vi and results:
-                en_to_vi = {
-                    "room": "tiện nghi",
-                    "cleanliness": "vệ sinh",
-                    "staff": "dịch vụ",
-                    "service": "dịch vụ",
-                    "location": "vị trí",
-                    "food": "ẩm thực",
-                    "price": "giá cả",
-                    "wifi": "tiện nghi",
-                    "pool": "tiện nghi"
-                }
-                mapped_results = []
-                seen_aspects = set()
-                for res in results:
-                    vi_aspect = en_to_vi.get(res["aspect"], res["aspect"])
-                    pair = (vi_aspect, res["sentiment"])
-                    if pair not in seen_aspects:
-                        seen_aspects.add(pair)
-                        mapped_results.append({
-                            "aspect": vi_aspect,
-                            "sentiment": res["sentiment"],
-                            "confidence": res["confidence"],
-                            "source": "huggingface"
-                        })
-                results = mapped_results
-                
             if not results:
                 # If no aspect matches or scores are too low, fallback to rule-based ABSA
                 return rule_based_absa(text)

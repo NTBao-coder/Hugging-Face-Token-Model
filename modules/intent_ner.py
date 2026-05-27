@@ -3,6 +3,10 @@
 import re
 from typing import Any
 from modules import get_inference_client
+from modules.translation import TranslationService, TranslationError
+from utils.language_detect import LanguageDetector
+from utils.label_mapper import map_entity_type, map_intent
+from utils.preprocessing import normalize_vietnamese_text
 
 # Travel intent mappings
 TRAVEL_INTENTS = {
@@ -48,10 +52,32 @@ def rule_based_intent(text: str) -> dict[str, Any]:
     max_score = scores[best_intent]
     
     if max_score == 0:
-        return {"intent": "request info", "confidence": 0.5, "source": "heuristic"}
+        return {"intent": "request info", "intent_vi": map_intent("request info"), "confidence": 0.5, "source": "heuristic"}
         
     confidence = 0.5 + min(0.45, max_score * 0.15)
-    return {"intent": best_intent, "confidence": round(confidence, 2), "source": "heuristic"}
+    return {"intent": best_intent, "intent_vi": map_intent(best_intent), "confidence": round(confidence, 2), "source": "heuristic"}
+
+
+def _prepare_english_input(text: str) -> dict[str, Any]:
+    """Detect VI/EN and translate Vietnamese text before EN zero-shot/NER models."""
+    normalized = normalize_vietnamese_text(text)
+    translator = TranslationService()
+    detection = LanguageDetector(translator).detect(normalized)
+    translated = normalized
+
+    if detection.language == "vi":
+        try:
+            translated = translator.translate(normalized, src="vi", dest="en")
+        except TranslationError:
+            translated = normalized
+
+    return {
+        "original_text": normalized,
+        "text_for_model": translated,
+        "translated_text": translated if translated != normalized else "",
+        "detected_language": detection.language,
+        "language_confidence": detection.confidence,
+    }
 
 def classify_intent(text: str, candidate_labels: list[str] | None = None) -> dict[str, Any]:
     """
@@ -62,13 +88,16 @@ def classify_intent(text: str, candidate_labels: list[str] | None = None) -> dic
     if not candidate_labels:
         candidate_labels = list(TRAVEL_INTENTS.keys())
         
+    prepared = _prepare_english_input(text)
+    text_for_model = prepared["text_for_model"]
+
     client = get_inference_client()
     if client is None:
-        return rule_based_intent(text)
+        return {**rule_based_intent(text), **prepared}
         
     try:
         result = client.zero_shot_classification(
-            text,
+            text_for_model,
             candidate_labels,
             model="facebook/bart-large-mnli"
         )
@@ -82,11 +111,13 @@ def classify_intent(text: str, candidate_labels: list[str] | None = None) -> dic
             
         return {
             "intent": best_label,
+            "intent_vi": map_intent(best_label),
             "confidence": round(score, 3),
-            "source": "huggingface"
+            "source": "huggingface",
+            **prepared,
         }
     except Exception:
-        return rule_based_intent(text)
+        return {**rule_based_intent(text), **prepared}
 
 def extract_entities(text: str) -> list[dict[str, Any]]:
     """
@@ -95,13 +126,15 @@ def extract_entities(text: str) -> list[dict[str, Any]]:
     Returns a list of dicts [{"word": str, "entity_type": str, "score": float, "start": int, "end": int, "source": str}]
     """
     entities = []
+    prepared = _prepare_english_input(text)
+    text_for_model = prepared["text_for_model"]
     
     # 1. Hugging Face NER extraction
     client = get_inference_client()
     if client is not None:
         try:
             hf_ents = client.token_classification(
-                text,
+                text_for_model,
                 model="dslim/bert-base-NER",
                 aggregation_strategy="simple"
             )
@@ -124,10 +157,13 @@ def extract_entities(text: str) -> list[dict[str, Any]]:
                 entities.append({
                     "word": word,
                     "entity_type": mapped_type,
+                    "entity_type_vi": map_entity_type(mapped_type),
                     "score": round(score, 3),
                     "start": start,
                     "end": end,
-                    "source": "huggingface"
+                    "source": "huggingface_translated" if prepared["detected_language"] == "vi" else "huggingface",
+                    "model_text": text_for_model,
+                    "detected_language": prepared["detected_language"],
                 })
         except Exception:
             pass # Fail silently, fall back to rules
@@ -144,6 +180,7 @@ def extract_entities(text: str) -> list[dict[str, Any]]:
                 entities.append({
                     "word": text[start:end],
                     "entity_type": "LOCATION",
+                    "entity_type_vi": map_entity_type("LOCATION"),
                     "score": 1.0,
                     "start": start,
                     "end": end,
@@ -152,8 +189,8 @@ def extract_entities(text: str) -> list[dict[str, Any]]:
                 
     # 3. Rule-based date extraction
     date_patterns = [
+        r"\bngày\s+\d{1,2}(?:[/-]\d{1,2}(?:[/-]\d{2,4})?|\s+tháng\s+\d{1,2})?(?:\s+năm\s+\d{4})?\b",
         r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b", # e.g. 12/20 or 20/12/2026
-        r"\bngày\s+\d{1,2}(?:\s+tháng\s+\d{1,2})?(?:\s+năm\s+\d{4})?\b", # e.g. ngày 20 tháng 12
         r"\bnext\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month)\b",
         r"\bthứ\s+[hai|ba|tư|năm|sáu|bảy|chủ nhật]+\s+tới\b"
     ]
@@ -164,6 +201,7 @@ def extract_entities(text: str) -> list[dict[str, Any]]:
                 entities.append({
                     "word": text[start:end],
                     "entity_type": "DATE",
+                    "entity_type_vi": map_entity_type("DATE"),
                     "score": 0.95,
                     "start": start,
                     "end": end,
@@ -182,6 +220,7 @@ def extract_entities(text: str) -> list[dict[str, Any]]:
                 entities.append({
                     "word": text[start:end],
                     "entity_type": "DURATION",
+                    "entity_type_vi": map_entity_type("DURATION"),
                     "score": 0.95,
                     "start": start,
                     "end": end,
@@ -200,6 +239,7 @@ def extract_entities(text: str) -> list[dict[str, Any]]:
                 entities.append({
                     "word": text[start:end],
                     "entity_type": "BUDGET",
+                    "entity_type_vi": map_entity_type("BUDGET"),
                     "score": 0.95,
                     "start": start,
                     "end": end,
@@ -237,4 +277,3 @@ def travel_chat(user_message: str) -> str:
         return res.strip()
     except Exception:
         return fallback
-

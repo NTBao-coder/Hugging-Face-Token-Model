@@ -112,8 +112,10 @@ def show_aspect_sentiment_grid(aspects: list[dict]) -> None:
     cols = st.columns(min(3, len(aspects)))
     for idx, item in enumerate(aspects):
         col = cols[idx % len(cols)]
-        aspect_name = item.get("aspect", "").capitalize()
+        aspect_name = item.get("aspect_vi") or item.get("aspect", "")
+        aspect_name = str(aspect_name).capitalize()
         sentiment = item.get("sentiment", "NEUTRAL").upper()
+        sentiment_label = item.get("sentiment_vi") or sentiment
         score = item.get("confidence", 0.0)
         
         # Color classes
@@ -136,7 +138,7 @@ def show_aspect_sentiment_grid(aspects: list[dict]) -> None:
                 <div style="background:{bg_color}; border-radius:12px; padding:16px; border: 1px solid rgba(255,255,255,0.05); margin-bottom:12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-weight:700; font-size:1.05rem;">{aspect_name}</span>
-                        <span class="badge {badge_class}">{sentiment}</span>
+                        <span class="badge {badge_class}">{sentiment_label}</span>
                     </div>
                     <div style="margin-top:10px; font-size:0.85rem; color:#8A90A6;">
                         Độ tin cậy: <span style="color:{text_color}; font-weight:600;">{score:.2f}</span>
@@ -166,12 +168,13 @@ def render_entity_badges(entities: list[dict]) -> None:
     for ent in entities:
         val = ent.get("text") or ent.get("word") or "unknown"
         etype = ent.get("entity_type") or ent.get("type") or "UNKNOWN"
+        etype_label = ent.get("entity_type_vi") or etype
         color = type_color_map.get(etype.upper(), "#95a5a6")
         
         badges_html.append(
             f'<span style="display:inline-block; background:rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.15); '
             f'color:{color}; border: 1px solid {color}4D; padding:4px 10px; border-radius:8px; margin:4px; font-weight:600; font-size:0.9rem;">'
-            f'{val} <span style="font-size:0.7rem; font-weight:400; opacity:0.8;">({etype})</span>'
+            f'{val} <span style="font-size:0.7rem; font-weight:400; opacity:0.8;">({etype_label})</span>'
             f'</span>'
         )
     
@@ -252,6 +255,5 @@ def show_topic_bar_chart(df_topics: pd.DataFrame) -> None:
         st.info("💡 Mách nhỏ: Cài đặt `plotly` (`pip install plotly`) để xem biểu đồ tương tác đẹp mắt hơn.")
         chart_df = viz_df.set_index("topic")
         st.bar_chart(chart_df)
-
 
 

@@ -20,6 +20,7 @@ from modules import get_hf_token, get_inference_client
 from modules.sentiment import analyze_sentiment
 from modules.intent_ner import classify_intent, extract_entities, travel_chat, TRAVEL_INTENTS
 from modules.topic import detect_topics_bertopic, CANDIDATE_TOPICS
+from modules.translation import TranslationError, TranslationService
 
 # Set page configuration
 st.set_page_config(
@@ -56,7 +57,7 @@ with st.sidebar:
         <div style='text-align: center; margin-bottom: 20px;'>
             <h2 style='color:#FF4B4B; font-size: 2.2rem; margin: 0;'>🌏</h2>
             <h3 style='margin: 5px 0 0 0;'>MyTravelHelper</h3>
-            <p style='color:#8A90A6; font-size:0.85rem;'>Phiên bản 1.0.0</p>
+            <p style='color:#8A90A6; font-size:0.85rem;'>Phiên bản 2.0.0 Multilingual</p>
         </div>
         """, 
         unsafe_allow_html=True
@@ -80,6 +81,7 @@ with st.sidebar:
         - **Named Entity Recognition (NER):** `BERT-base-NER` + Heuristics
         - **Aspect Sentiment:** `DeBERTa-v3-base-absa-v1.1`
         - **Topic Clustering:** `BERTopic` / `KMeans` + `BART-large-mnli`
+        - **Translation:** `googletrans` demo / Google Cloud Translate production
         """
     )
 
@@ -87,10 +89,11 @@ with st.sidebar:
 render_main_title()
 
 # Define Tabs
-tab_chat, tab_review, tab_topic, tab_pipeline = st.tabs([
+tab_chat, tab_review, tab_topic, tab_translate, tab_pipeline = st.tabs([
     "💬 Trợ Lý Tư Vấn & NLU",
     "📊 Phân Tích Cảm Xúc Khía Cạnh",
     "🏷️ Gom Cụm Chủ Đề Review",
+    "🌐 Dịch thuật EN ↔ VI",
     "⚙️ Kiến Trúc Hệ Thống"
 ])
 
@@ -113,7 +116,7 @@ with tab_chat:
                 # 1. Classify Intent
                 intent_res = classify_intent(user_query)
                 intent_en = intent_res["intent"]
-                intent_vi = TRAVEL_INTENTS.get(intent_en, intent_en)
+                intent_vi = intent_res.get("intent_vi") or TRAVEL_INTENTS.get(intent_en, intent_en)
                 
                 # 2. Extract Entities
                 entities = extract_entities(user_query)
@@ -131,6 +134,11 @@ with tab_chat:
             )
             
             st.markdown("#### 🔍 Kết quả phân tích Ngôn ngữ tự nhiên (NLU):")
+            if intent_res.get("translated_text"):
+                st.info(
+                    f"Ngôn ngữ phát hiện: `{intent_res.get('detected_language')}` · "
+                    f"Bản dịch EN dùng cho model: {intent_res['translated_text']}"
+                )
             col_intent, col_entities = st.columns([1, 2])
             
             with col_intent:
@@ -196,7 +204,13 @@ with tab_review:
             
             lbl = overall.get("label", "NEUTRAL")
             clr = color_map.get(lbl, "#95a5a6")
-            lbl_vi = sentiment_vi.get(lbl, lbl)
+            lbl_vi = overall.get("label_vi") or sentiment_vi.get(lbl, lbl)
+
+            if overall.get("translated_text"):
+                st.info(
+                    f"Ngôn ngữ phát hiện: `{overall.get('detected_language')}` · "
+                    f"Bản dịch EN dùng cho model: {overall['translated_text']}"
+                )
             
             st.markdown(
                 f"""
@@ -299,10 +313,96 @@ with tab_topic:
                     st.dataframe(words_df, use_container_width=True, hide_index=True)
                 else:
                     st.info("Chủ đề này không có từ khóa đại diện riêng lẻ.")
+
+                translated_docs = getattr(model, "translated_docs", [])
+                if translated_docs:
+                    with st.expander("Xem bản dịch EN đã dùng cho Topic Model"):
+                        st.dataframe(
+                            pd.DataFrame({
+                                "Review gốc": reviews_to_run,
+                                "Bản dịch EN": translated_docs,
+                            }),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
             else:
                 st.warning("Không phát hiện được chủ đề nào rõ rệt từ tập review.")
 
-# ----------------- TAB 4: ARCHITECTURE & SYSTEM -----------------
+# ----------------- TAB 4: TRANSLATION TOOL -----------------
+with tab_translate:
+    st.markdown("### 🌐 Công cụ dịch thuật English ↔ Vietnamese")
+    st.markdown("Dịch nhanh hai chiều để kiểm tra lớp Translate-then-Process trước khi chạy NLP model.")
+
+    lang_options = {
+        "Tiếng Việt": "vi",
+        "Tiếng Anh": "en",
+    }
+
+    if "src_lang" not in st.session_state:
+        st.session_state["src_lang"] = "Tiếng Việt"
+    if "tgt_lang" not in st.session_state:
+        st.session_state["tgt_lang"] = "Tiếng Anh"
+    if "src_text" not in st.session_state:
+        st.session_state["src_text"] = "Phòng rất sạch nhưng nhân viên hơi chậm."
+    if "translated_text" not in st.session_state:
+        st.session_state["translated_text"] = ""
+
+    col_src, col_swap, col_tgt = st.columns([5, 1, 5])
+
+    with col_src:
+        src_lang = st.selectbox("Ngôn ngữ nguồn", list(lang_options), key="src_lang")
+        src_text = st.text_area("Nhập văn bản nguồn", height=180, key="src_text")
+        st.caption(f"{len(src_text)} ký tự")
+
+    with col_swap:
+        st.write("")
+        st.write("")
+        if st.button("⇄", help="Hoán đổi ngôn ngữ"):
+            old_src = st.session_state["src_lang"]
+            st.session_state["src_lang"] = st.session_state["tgt_lang"]
+            st.session_state["tgt_lang"] = old_src
+            if st.session_state.get("translated_text"):
+                st.session_state["src_text"] = st.session_state["translated_text"]
+                st.session_state["translated_text"] = ""
+            st.rerun()
+
+    with col_tgt:
+        tgt_lang = st.selectbox("Ngôn ngữ đích", list(lang_options), key="tgt_lang")
+        st.text_area(
+            "Bản dịch",
+            value=st.session_state.get("translated_text", ""),
+            height=180,
+            disabled=True,
+        )
+        st.caption(f"{len(st.session_state.get('translated_text', ''))} ký tự")
+
+    col_translate, col_clear = st.columns([1, 1])
+    with col_translate:
+        if st.button("Dịch ngay", type="primary", key="btn_translate"):
+            if not src_text.strip():
+                st.error("Vui lòng nhập văn bản cần dịch.")
+            elif src_lang == tgt_lang:
+                st.warning("Vui lòng chọn hai ngôn ngữ khác nhau.")
+            else:
+                translator = TranslationService()
+                with st.spinner("Đang dịch..."):
+                    try:
+                        st.session_state["translated_text"] = translator.translate(
+                            src_text,
+                            src=lang_options[src_lang],
+                            dest=lang_options[tgt_lang],
+                        )
+                        st.rerun()
+                    except TranslationError as exc:
+                        st.error(f"Không thể dịch văn bản: {exc}")
+
+    with col_clear:
+        if st.button("Xóa nội dung", key="btn_clear_translate"):
+            st.session_state["src_text"] = ""
+            st.session_state["translated_text"] = ""
+            st.rerun()
+
+# ----------------- TAB 5: ARCHITECTURE & SYSTEM -----------------
 with tab_pipeline:
     st.markdown("### ⚙️ Sơ đồ thiết kế hệ thống (Pipeline)")
     st.markdown(
