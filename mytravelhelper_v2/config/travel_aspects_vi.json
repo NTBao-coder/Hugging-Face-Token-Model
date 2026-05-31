@@ -1,0 +1,11 @@
+{
+  "room": ["phòng", "giường", "chăn", "gối", "đệm", "bàn ghế", "view", "ban công", "không gian"],
+  "cleanliness": ["sạch", "bẩn", "vệ sinh", "mùi", "thơm", "dọn dẹp", "rác", "bụi", "thông thoáng"],
+  "staff": ["nhân viên", "lễ tân", "bảo vệ", "phục vụ", "dọn phòng", "chủ nhà", "thái độ", "thân thiện", "nhiệt tình"],
+  "service": ["dịch vụ", "spa", "massage", "giặt là", "đón sân bay", "tour", "cho thuê xe", "tiện ích"],
+  "location": ["vị trí", "trung tâm", "gần", "xa", "tiện di chuyển", "biển", "chợ", "sân bay", "địa điểm"],
+  "food": ["đồ ăn", "bữa sáng", "buffet", "nhà hàng", "thực đơn", "món ăn", "ngon", "nước uống", "ẩm thực"],
+  "price": ["giá", "chi phí", "đắt", "rẻ", "phù hợp", "tiền", "khuyến mãi", "phụ phí", "giá cả"],
+  "wifi": ["wifi", "mạng", "internet", "kết nối", "sóng", "wifi yếu"],
+  "pool": ["hồ bơi", "bể bơi", "pool"]
+}

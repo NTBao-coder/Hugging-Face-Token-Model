@@ -992,32 +992,32 @@ def translate_with_fallback(text: str, src: str, dest: str) -> str:
 
 ### Notebook
 
-- [ ] Chạy `Restart & Run All` không lỗi
-- [ ] Phần 1: Có bảng so sánh v1.0 vs v2.0 rõ ràng
-- [ ] Phần 2: Sơ đồ pipeline có highlight phần mới (Translation layer)
-- [ ] Phần 3: Hướng dẫn đủ cả Option A (googletrans) + Option B (Google Cloud)
-- [ ] Phần 4: Có đủ 5 bộ test cơ bản với output hiển thị
-- [ ] Phần 5: Demo app chạy được với input tiếng Việt
-- [ ] Phần 6.1: ABSA VI với output song ngữ có nhãn tiếng Việt
-- [ ] Phần 6.2: Intent + NER VI với địa danh Việt Nam xử lý đúng
-- [ ] Phần 6.3: Topic Detection VI với tên chủ đề tiếng Việt
-- [ ] Phần 6.4: Tab 4 Translation tool demo hoán đổi EN↔VI
+- [x] Chạy `Restart & Run All` không lỗi
+- [x] Phần 1: Có bảng so sánh v1.0 vs v2.0 rõ ràng
+- [x] Phần 2: Sơ đồ pipeline có highlight phần mới (Translation layer)
+- [x] Phần 3: Hướng dẫn đủ cả Option A (googletrans) + Option B (Google Cloud)
+- [x] Phần 4: Có đủ 5 bộ test cơ bản với output hiển thị
+- [x] Phần 5: Demo app chạy được với input tiếng Việt
+- [x] Phần 6.1: ABSA VI với output song ngữ có nhãn tiếng Việt
+- [x] Phần 6.2: Intent + NER VI với địa danh Việt Nam xử lý đúng
+- [x] Phần 6.3: Topic Detection VI với tên chủ đề tiếng Việt
+- [x] Phần 6.4: Tab 4 Translation tool demo hoán đổi EN↔VI
 
 ### Streamlit App
 
-- [ ] `streamlit run app.py` chạy không lỗi
-- [ ] Tab 1, 2, 3 có toggle chọn ngôn ngữ VI/EN
-- [ ] Tab 4 Translation tool hoạt động đúng, nút ⇄ hoán đổi được
-- [ ] Kết quả hiển thị song ngữ (EN gốc + VI dịch)
-- [ ] Xử lý lỗi translate gracefully (không crash khi API fail)
+- [x] `streamlit run app.py` chạy không lỗi
+- [x] Tab 1, 2, 3 có toggle chọn ngôn ngữ VI/EN
+- [x] Tab 4 Translation tool hoạt động đúng, nút ⇄ hoán đổi được
+- [x] Kết quả hiển thị song ngữ (EN gốc + VI dịch)
+- [x] Xử lý lỗi translate gracefully (không crash khi API fail)
 
 ### Project
 
-- [ ] `requirements.txt` có thêm `googletrans`, `langdetect`, `deep-translator`
-- [ ] `config/vi_labels.json` có đầy đủ mapping
-- [ ] `data/sample_reviews_vi.json` có ≥ 15 review tiếng Việt
-- [ ] README cập nhật hướng dẫn setup cho v2.0
-- [ ] `.env.example` cập nhật (nếu dùng Google Cloud API)
+- [x] `requirements.txt` có thêm `googletrans`, `langdetect`, `deep-translator`
+- [x] `config/vi_labels.json` có đầy đủ mapping
+- [x] `data/sample_reviews_vi.json` có ≥ 15 review tiếng Việt
+- [x] README cập nhật hướng dẫn setup cho v2.0
+- [x] `.env.example` cập nhật (nếu dùng Google Cloud API)
 
 ---
 

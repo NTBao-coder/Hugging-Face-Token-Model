@@ -1,13 +1,15 @@
-"""Text preprocessing utilities for the travel NLP application."""
-
 import re
+import unicodedata
 
 def normalize_text(text: str) -> str:
-    """Normalize text by stripping surrounding whitespace and collapsing inner whitespace."""
+    """Normalize text by stripping surrounding whitespace, collapsing inner whitespace, and NFC normalisation."""
     if not text:
         return ""
+    # NFC normalisation is critical for Vietnamese to compose accents properly
+    text = unicodedata.normalize("NFC", text)
     # Collapse multiple whitespaces/newlines into a single space
     return re.sub(r"\s+", " ", text).strip()
+
 
 def truncate_text(text: str, max_chars: int = 1500) -> str:
     """Truncate text to prevent overloading LLM or API token limits, adding ellipsis if truncated."""

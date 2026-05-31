@@ -112,16 +112,17 @@ def show_aspect_sentiment_grid(aspects: list[dict]) -> None:
     cols = st.columns(min(3, len(aspects)))
     for idx, item in enumerate(aspects):
         col = cols[idx % len(cols)]
-        aspect_name = item.get("aspect", "").capitalize()
-        sentiment = item.get("sentiment", "NEUTRAL").upper()
+        aspect_name = item.get("aspect_vi", item.get("aspect", "")).capitalize()
+        sentiment_vi = item.get("sentiment_vi", item.get("sentiment", "NEUTRAL")).upper()
+        sentiment_en = item.get("sentiment", "NEUTRAL").upper()
         score = item.get("confidence", 0.0)
         
-        # Color classes
-        if sentiment in ["POSITIVE", "TÍCH CỰC"]:
+        # Color classes based on English sentiment key
+        if sentiment_en in ["POSITIVE", "TÍCH CỰC"]:
             badge_class = "badge-positive"
             text_color = "#2ecc71"
             bg_color = "rgba(46, 204, 113, 0.05)"
-        elif sentiment in ["NEGATIVE", "TIÊU CỰC"]:
+        elif sentiment_en in ["NEGATIVE", "TIÊU CỰC"]:
             badge_class = "badge-negative"
             text_color = "#e74c3c"
             bg_color = "rgba(231, 76, 60, 0.05)"
@@ -136,7 +137,7 @@ def show_aspect_sentiment_grid(aspects: list[dict]) -> None:
                 <div style="background:{bg_color}; border-radius:12px; padding:16px; border: 1px solid rgba(255,255,255,0.05); margin-bottom:12px;">
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-weight:700; font-size:1.05rem;">{aspect_name}</span>
-                        <span class="badge {badge_class}">{sentiment}</span>
+                        <span class="badge {badge_class}">{sentiment_vi}</span>
                     </div>
                     <div style="margin-top:10px; font-size:0.85rem; color:#8A90A6;">
                         Độ tin cậy: <span style="color:{text_color}; font-weight:600;">{score:.2f}</span>
@@ -166,12 +167,13 @@ def render_entity_badges(entities: list[dict]) -> None:
     for ent in entities:
         val = ent.get("text") or ent.get("word") or "unknown"
         etype = ent.get("entity_type") or ent.get("type") or "UNKNOWN"
+        etype_vi = ent.get("entity_type_vi", etype)
         color = type_color_map.get(etype.upper(), "#95a5a6")
         
         badges_html.append(
             f'<span style="display:inline-block; background:rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.15); '
             f'color:{color}; border: 1px solid {color}4D; padding:4px 10px; border-radius:8px; margin:4px; font-weight:600; font-size:0.9rem;">'
-            f'{val} <span style="font-size:0.7rem; font-weight:400; opacity:0.8;">({etype})</span>'
+            f'{val} <span style="font-size:0.7rem; font-weight:400; opacity:0.8;">({etype_vi})</span>'
             f'</span>'
         )
     

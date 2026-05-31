@@ -1,30 +1,43 @@
-"""Topic Detection and Clustering module utilizing BERTopic with fallback to Scikit-Learn."""
+"""Topic Detection and Clustering module utilizing BERTopic with fallback to Scikit-Learn (translation supported)."""
 
 import numpy as np
 import pandas as pd
 from typing import Any, Tuple, List
 from modules import get_inference_client, get_hf_token
-from modules.intent_ner import classify_intent
+from modules.translation import TranslationService
+from utils.language_detect import LanguageDetector
 
-# Predefined candidate topic names for zero-shot auto-labeling
-CANDIDATE_TOPICS = [
-    "Biển và nghỉ dưỡng",
-    "Ẩm thực địa phương",
-    "Di chuyển & Vị trí",
-    "Dịch vụ khách sạn & Lễ tân",
-    "Chất lượng phòng & Tiện nghi",
-    "Chi phí & Giá cả",
-    "Văn hóa & Tham quan"
+# Predefined candidate topic names for zero-shot auto-labeling (English/Vietnamese mappings)
+CANDIDATE_TOPICS_EN = [
+    "Beach and Resort",
+    "Local Cuisine",
+    "Transportation & Location",
+    "Hotel Service & Reception",
+    "Room Quality & Amenities",
+    "Cost & Price",
+    "Culture & Sightseeing"
 ]
 
+EN_TO_VI_TOPICS = {
+    "Beach and Resort": "Biển và nghỉ dưỡng",
+    "Local Cuisine": "Ẩm thực địa phương",
+    "Transportation & Location": "Di chuyển & Vị trí",
+    "Hotel Service & Reception": "Dịch vụ khách sạn & Lễ tân",
+    "Room Quality & Amenities": "Chất lượng phòng & Tiện nghi",
+    "Cost & Price": "Chi phí & Giá cả",
+    "Culture & Sightseeing": "Văn hóa & Tham quan",
+    "Chủ đề chung": "Chủ đề chung",
+    "Outliers": "Ngoại lệ / Khác"
+}
+
 TOPIC_KEYWORDS = {
-    "Biển và nghỉ dưỡng": ["biển", "resort", "hồ bơi", "view", "nắng", "đảo", "beach", "pool", "sun"],
-    "Ẩm thực địa phương": ["đồ ăn", "món", "nhà hàng", "chợ", "hải sản", "bữa sáng", "food", "breakfast", "restaurant"],
-    "Di chuyển & Vị trí": ["taxi", "xe", "sân bay", "đi bộ", "di chuyển", "kẹt xe", "gần", "location", "near", "airport"],
-    "Dịch vụ khách sạn & Lễ tân": ["nhân viên", "phục vụ", "lễ tân", "hỗ trợ", "staff", "service", "reception"],
-    "Chất lượng phòng & Tiện nghi": ["phòng", "homestay", "giường", "wifi", "điều hòa", "room", "bed", "wifi", "ac"],
-    "Chi phí & Giá cả": ["giá", "vé", "chi phí", "ngân sách", "rẻ", "đắt", "price", "cost", "value"],
-    "Văn hóa & Tham quan": ["bảo tàng", "phố cổ", "chùa", "di tích", "tham quan", "visit", "tourist", "sightseeing"]
+    "Beach and Resort": ["beach", "pool", "sun", "sea", "resort", "ocean", "biển", "hồ bơi", "nghỉ dưỡng"],
+    "Local Cuisine": ["food", "breakfast", "restaurant", "menu", "delicious", "seafood", "đồ ăn", "ẩm thực", "nhà hàng"],
+    "Transportation & Location": ["taxi", "car", "airport", "walk", "traffic", "near", "location", "xe", "di chuyển", "vị trí"],
+    "Hotel Service & Reception": ["staff", "service", "reception", "friendly", "helpful", "nhân viên", "dịch vụ", "lễ tân"],
+    "Room Quality & Amenities": ["room", "bed", "wifi", "ac", "bathroom", "shower", "phòng", "tiện nghi", "wifi"],
+    "Cost & Price": ["price", "cost", "value", "expensive", "cheap", "giá", "chi phí", "đắt", "rẻ"],
+    "Culture & Sightseeing": ["museum", "temple", "tour", "visit", "guide", "sightseeing", "tham quan", "văn hóa"]
 }
 
 class FallbackTopicModel:
@@ -58,6 +71,8 @@ class FallbackTopicModel:
         centroids = kmeans.cluster_centers_
         
         topic_data = []
+        translator = TranslationService()
+        
         for i in range(k):
             # Get top 5 terms in cluster
             centroid = centroids[i]
@@ -70,7 +85,11 @@ class FallbackTopicModel:
                 
             # Assign label using zero-shot classification or keywords
             rep_text = " ".join(rep_words)
-            label = self._auto_label(rep_text)
+            label_en = self._auto_label(rep_text)
+            label_vi = EN_TO_VI_TOPICS.get(label_en, label_en)
+            
+            # Translate representation words to Vietnamese
+            rep_words_vi = [translator.translate(w, src="en", dest="vi") for w in rep_words]
             
             self.topics[i] = [(word, float(centroid[vectorizer.vocabulary_.get(word, 0)])) for word in rep_words]
             
@@ -79,8 +98,8 @@ class FallbackTopicModel:
             topic_data.append({
                 "Topic": i,
                 "Count": size,
-                "Name": f"{i}_{label}",
-                "Representation": rep_words
+                "Name": f"{i}_{label_vi}",
+                "Representation": rep_words_vi
             })
             
         self.topic_info_df = pd.DataFrame(topic_data)
@@ -93,7 +112,7 @@ class FallbackTopicModel:
             try:
                 res = client.zero_shot_classification(
                     rep_text,
-                    CANDIDATE_TOPICS,
+                    CANDIDATE_TOPICS_EN,
                     model="facebook/bart-large-mnli"
                 )
                 if isinstance(res, dict):
@@ -122,9 +141,19 @@ class FallbackTopicModel:
 
 
 def detect_topics_zeroshot(text: str, topics: List[str] | None = None) -> dict[str, Any]:
-    """Identify the primary topic of a single review using Zero-Shot classification."""
+    """Identify the primary topic of a single review using Zero-Shot classification (translation supported)."""
+    lang = LanguageDetector.detect(text)
+    translated_text = text
+    
+    if lang == "vi":
+        try:
+            translator = TranslationService()
+            translated_text = translator.translate(text, src="vi", dest="en")
+        except Exception:
+            pass
+            
     if not topics:
-        topics = CANDIDATE_TOPICS
+        topics = CANDIDATE_TOPICS_EN
         
     client = get_inference_client()
     if client is None:
@@ -134,19 +163,21 @@ def detect_topics_zeroshot(text: str, topics: List[str] | None = None) -> dict[s
         for topic, keywords in TOPIC_KEYWORDS.items():
             scores[topic] = sum(1 for kw in keywords if kw in lowered)
         best_topic = max(scores, key=scores.get)
+        best_topic_vi = EN_TO_VI_TOPICS.get(best_topic, best_topic)
         if scores[best_topic] == 0:
             return {"topic": "Chủ đề chung", "score": 0.5, "source": "heuristic"}
-        return {"topic": best_topic, "score": 0.7, "source": "heuristic"}
+        return {"topic": best_topic_vi, "score": 0.7, "source": "heuristic"}
         
     try:
         res = client.zero_shot_classification(
-            text,
+            translated_text,
             topics,
             model="facebook/bart-large-mnli"
         )
-        if isinstance(res, dict):
-            return {"topic": res["labels"][0], "score": round(res["scores"][0], 3), "source": "huggingface"}
-        return {"topic": res[0].label, "score": round(res[0].score, 3), "source": "huggingface"}
+        best_topic = res["labels"][0] if isinstance(res, dict) else res[0].label
+        best_topic_vi = EN_TO_VI_TOPICS.get(best_topic, best_topic)
+        score = res["scores"][0] if isinstance(res, dict) else res[0].score
+        return {"topic": best_topic_vi, "score": round(score, 3), "source": "huggingface"}
     except Exception:
         # Fallback to keyword matcher
         lowered = text.lower()
@@ -154,15 +185,25 @@ def detect_topics_zeroshot(text: str, topics: List[str] | None = None) -> dict[s
         for topic, keywords in TOPIC_KEYWORDS.items():
             scores[topic] = sum(1 for kw in keywords if kw in lowered)
         best_topic = max(scores, key=scores.get)
-        return {"topic": best_topic, "score": 0.6, "source": "heuristic_fallback"}
+        best_topic_vi = EN_TO_VI_TOPICS.get(best_topic, best_topic)
+        return {"topic": best_topic_vi, "score": 0.6, "source": "heuristic_fallback"}
 
 
 def detect_topics_bertopic(docs: List[str]) -> Tuple[List[int], Any]:
     """
-    Cluster docs and extract topics using BERTopic.
-    
-    If BERTopic is not installed or import fails, falls back gracefully to FallbackTopicModel.
+    Cluster docs and extract topics using BERTopic (with translation layer).
     """
+    # 1. Detect if inputs are Vietnamese
+    is_vi = any(LanguageDetector.detect(doc) == "vi" for doc in docs[:min(5, len(docs))])
+    
+    translated_docs = docs
+    translator = TranslationService()
+    if is_vi:
+        try:
+            translated_docs = translator.batch_translate(docs, src="vi", dest="en")
+        except Exception:
+            pass
+            
     try:
         from bertopic import BERTopic
         from sentence_transformers import SentenceTransformer
@@ -173,39 +214,53 @@ def detect_topics_bertopic(docs: List[str]) -> Tuple[List[int], Any]:
             min_topic_size=min(2, len(docs)),
             nr_topics="auto"
         )
-        topics, _ = topic_model.fit_transform(docs)
+        topics, _ = topic_model.fit_transform(translated_docs)
         
         # Zero-shot label naming for topic representations
         topic_info = topic_model.get_topic_info()
         client = get_inference_client()
         
-        if client is not None:
-            updated_names = {}
-            for index, row in topic_info.iterrows():
-                topic_id = row["Topic"]
-                if topic_id == -1:
-                    updated_names[-1] = "-1_Outliers"
-                    continue
-                rep_words = [w for w, _ in topic_model.get_topic(topic_id)[:5]]
-                rep_text = " ".join(rep_words)
+        updated_names = {}
+        for index, row in topic_info.iterrows():
+            topic_id = row["Topic"]
+            if topic_id == -1:
+                updated_names[-1] = "-1_Ngoại lệ / Khác"
+                continue
+                
+            rep_words = [w for w, _ in topic_model.get_topic(topic_id)[:5]]
+            rep_text = " ".join(rep_words)
+            
+            label_en = "General Topic"
+            if client is not None:
                 try:
                     res = client.zero_shot_classification(
                         rep_text,
-                        CANDIDATE_TOPICS,
+                        CANDIDATE_TOPICS_EN,
                         model="facebook/bart-large-mnli"
                     )
-                    label = res["labels"][0] if isinstance(res, dict) else res[0].label
-                    updated_names[topic_id] = f"{topic_id}_{label}"
+                    label_en = res["labels"][0] if isinstance(res, dict) else res[0].label
                 except Exception:
-                    updated_names[topic_id] = f"{topic_id}_Topic {topic_id}"
+                    pass
+            else:
+                # Local keyword mapping
+                scores = {topic: 0 for topic in TOPIC_KEYWORDS}
+                for topic, keywords in TOPIC_KEYWORDS.items():
+                    for word in rep_words:
+                        if any(kw in word or word in kw for kw in keywords):
+                            scores[topic] += 1
+                best_t = max(scores, key=scores.get)
+                if scores[best_t] > 0:
+                    label_en = best_t
             
-            # Map names
-            topic_model.set_topic_labels(updated_names)
+            label_vi = EN_TO_VI_TOPICS.get(label_en, label_en)
+            updated_names[topic_id] = f"{topic_id}_{label_vi}"
             
+        topic_model.set_topic_labels(updated_names)
+        
         return topics, topic_model
         
-    except ImportError:
-        # Fallback to KMeans
+    except Exception:
+        # Fallback to KMeans if BERTopic is missing or fails (e.g., dataset size issues)
         model = FallbackTopicModel(n_clusters=max(2, len(docs) // 3))
-        topics, fitted_model = model.fit_transform(docs)
+        topics, fitted_model = model.fit_transform(translated_docs)
         return topics, fitted_model
