@@ -1,0 +1,40 @@
+{
+  "sentiment": {
+    "POSITIVE": "TÍCH CỰC",
+    "NEGATIVE": "TIÊU CỰC",
+    "NEUTRAL": "TRUNG LẬP"
+  },
+  "intent": {
+    "book hotel": "đặt khách sạn",
+    "find restaurant": "tìm nhà hàng",
+    "get directions": "hỏi đường / chỉ đường",
+    "check weather": "hỏi thời tiết",
+    "find attraction": "tìm điểm tham quan",
+    "cancel booking": "hủy đặt chỗ",
+    "make complaint": "phản ánh / khiếu nại",
+    "request info": "hỏi thông tin chung"
+  },
+  "aspects": {
+    "room": "phòng ốc",
+    "cleanliness": "vệ sinh",
+    "staff": "nhân viên",
+    "service": "dịch vụ",
+    "location": "vị trí",
+    "food": "đồ ăn",
+    "price": "giá cả",
+    "wifi": "wifi",
+    "pool": "hồ bơi"
+  },
+  "entity_types": {
+    "LOCATION": "ĐỊA ĐIỂM",
+    "LOC": "ĐỊA ĐIỂM",
+    "PERSON": "CON NGƯỜI",
+    "PER": "CON NGƯỜI",
+    "ORGANIZATION": "TỔ CHỨC",
+    "ORG": "TỔ CHỨC",
+    "DATE": "THỜI GIAN",
+    "DURATION": "KHOẢNG THỜI GIAN",
+    "BUDGET": "NGÂN SÁCH",
+    "MISC": "KHÁC"
+  }
+}
